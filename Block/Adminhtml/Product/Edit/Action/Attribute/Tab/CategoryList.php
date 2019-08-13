@@ -1,6 +1,7 @@
 <?php
 namespace Paulmillband\AdminProductsToCategory\Block\Adminhtml\Product\Edit\Action\Attribute\Tab;
 
+use Magento\Catalog\Model\Category as ModelCategory;
 use Magento\Store\Model\Group;
 
 class CategoryList extends \Magento\Backend\Block\Widget
@@ -14,6 +15,7 @@ class CategoryList extends \Magento\Backend\Block\Widget
     protected $categoryCollection;
     protected $context;
     protected $layout;
+    protected $dataCollectionFactory;
 
     public function __construct(
         \Magento\Backend\Block\Template\Context $context,
@@ -22,6 +24,8 @@ class CategoryList extends \Magento\Backend\Block\Widget
         \Magento\Framework\View\Result\PageFactory $resultPageFactory,
         \Magento\Framework\View\LayoutInterface $layout,
         \Magento\Catalog\Helper\Category $categoryHelper,
+        \Magento\Catalog\Model\CategoryFactory $categoryFactory,
+        \Magento\Framework\Data\CollectionFactory $dataCollectionFactory,
         array $data = []
     ) {
         $this->context = $context;
@@ -31,6 +35,8 @@ class CategoryList extends \Magento\Backend\Block\Widget
         $this->resultPageFactory = $resultPageFactory;
         $this->layout = $layout;
         $this->storeManager = $context->getStoreManager();
+        $this->categoryFactory = $categoryFactory;
+        $this->dataCollectionFactory = $dataCollectionFactory;
         parent::__construct(
             $context,
             $data
@@ -38,14 +44,50 @@ class CategoryList extends \Magento\Backend\Block\Widget
     }
 
     /**
-     * @param bool $sorted
+     * Retrieve current store categories
+     *
+     * @param bool|string $sorted
      * @param bool $asCollection
      * @param bool $toLoad
-     * @return \Magento\Framework\Data\Tree\Node\Collection
+     * @return \Magento\Framework\Data\Tree\Node\Collection or
+     * \Magento\Catalog\Model\ResourceModel\Category\Collection or array
      */
     public function getStoreCategories($sorted = false, $asCollection = false, $toLoad = true)
     {
-        return $this->categoryHelper->getStoreCategories($sorted , $asCollection, $toLoad);
+        if ($this->getRequest()->getParam('store')) {
+            $parent = $this->storeManager->getStore($this->getRequest()->getParam('store'))->getRootCategoryId();
+        } else {
+            $parent = $this->storeManager->getStore()->getRootCategoryId();
+        }
+
+        $cacheKey = sprintf('%d-%d-%d-%d', $parent, $sorted, $asCollection, $toLoad);
+        if (isset($this->_storeCategories[$cacheKey])) {
+            return $this->_storeCategories[$cacheKey];
+        }
+
+        /**
+         * Check if parent node of the store still exists
+         */
+        $category = $this->categoryFactory->create();
+        /* @var $category ModelCategory */
+        if (!$category->checkId($parent)) {
+            if ($asCollection) {
+                return $this->dataCollectionFactory->create();
+            }
+            return [];
+        }
+
+        $recursionLevel = max(
+            0,
+            (int)$this->_scopeConfig->getValue(
+                'catalog/navigation/max_depth',
+                \Magento\Store\Model\ScopeInterface::SCOPE_STORE
+            )
+        );
+        $storeCategories = $category->getCategories($parent, $recursionLevel, $sorted, $asCollection, $toLoad);
+
+        $this->_storeCategories[$cacheKey] = $storeCategories;
+        return $storeCategories;
     }
 
     /**
@@ -116,3 +158,4 @@ class CategoryList extends \Magento\Backend\Block\Widget
         return $group->getStores();
     }
 }
+
